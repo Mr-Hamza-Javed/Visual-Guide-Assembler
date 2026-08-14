@@ -22,12 +22,13 @@
 ------------------------------------------------------------------ */
 
 window.FIREBASE_CONFIG = {
-  apiKey:            "YOUR_API_KEY",
-  authDomain:        "YOUR_PROJECT.firebaseapp.com",
-  projectId:         "YOUR_PROJECT_ID",
-  storageBucket:     "YOUR_PROJECT.firebasestorage.app",
-  messagingSenderId: "YOUR_SENDER_ID",
-  appId:             "YOUR_APP_ID"
+  apiKey:            "AIzaSyBMcRBJAYLEC0oCf3zVLsPsoWTH9KYbLQc",
+  authDomain:        "alamzaserver.firebaseapp.com",
+  projectId:         "alamzaserver",
+  storageBucket:     "alamzaserver.firebasestorage.app",
+  messagingSenderId: "95415257994",
+  appId:             "1:95415257994:web:f1f4a64a72d04cfcb55673",
+  measurementId:     "G-DE06KMDE3T"
 };
 
 /* Change this if you want to keep more than one separate library of setups. */
