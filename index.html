@@ -1,4 +1,4 @@
-<!DOCTYPE html> 
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -101,10 +101,34 @@ pre.out{background:var(--paper);color:#1B2026;padding:14px;border-radius:5px;
 .bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
 .stat{font-size:11px;color:var(--dim)}
 .stat b{color:var(--txt)}
-.toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);
+.toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);z-index:60;
   background:var(--amber);color:#161B21;padding:8px 16px;border-radius:4px;
   font-weight:700;font-size:12px;opacity:0;pointer-events:none;transition:opacity .18s}
 .toast.on{opacity:1}
+.scrim{position:fixed;inset:0;background:rgba(6,9,12,.72);display:none;z-index:40;
+  align-items:flex-start;justify-content:center;padding:40px 16px;overflow:auto}
+.scrim.on{display:flex}
+.modal{background:var(--panel);border:1px solid var(--edge2);border-radius:6px;
+  width:100%;max-width:720px}
+.modal-hd{display:flex;align-items:center;gap:10px;padding:12px 14px;
+  border-bottom:1px solid var(--edge);background:var(--raise)}
+.modal-hd h2{font-size:13px;letter-spacing:.1em;text-transform:uppercase}
+.modal-bd{padding:14px}
+.cfg{display:flex;align-items:center;gap:8px;padding:9px 10px;border:1px solid var(--edge);
+  border-radius:4px;margin-bottom:7px;background:var(--ink);flex-wrap:wrap}
+.cfg .nm{flex:1;min-width:150px;font-weight:600}
+.cfg .meta{font-size:10.5px;color:var(--faint)}
+.cfg.cur{border-color:var(--amber)}
+.conn{display:flex;align-items:center;gap:7px;font-size:11.5px;color:var(--dim);
+  padding:8px 10px;border:1px solid var(--edge);border-radius:4px;margin-bottom:12px}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--faint);flex:none}
+.dot.up{background:var(--ok)}.dot.down{background:var(--alert)}
+.savebox{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;
+  padding:11px;border:1px solid var(--edge);border-radius:4px;margin-bottom:14px}
+.savebox>div:first-child{flex:1;min-width:180px}
+.chk{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--dim);
+  white-space:nowrap;padding-bottom:6px}
+.chk input{width:auto}
 @media(prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 </head>
@@ -114,8 +138,9 @@ pre.out{background:var(--paper);color:#1B2026;padding:14px;border-radius:5px;
   <div class="brand"><b>GUIDE</b> ASSEMBLER</div>
   <div class="spacer"></div>
   <div class="hdr-actions">
-    <button class="ghost" id="btnExport">Export setup</button>
-    <button class="ghost" id="btnImport">Import setup</button>
+    <button class="pri" id="btnCloud">Cloud setups</button>
+    <button class="ghost" id="btnExport">Export file</button>
+    <button class="ghost" id="btnImport">Import file</button>
     <button class="ghost" id="btnReset">Clear all</button>
   </div>
 </header>
@@ -144,7 +169,10 @@ pre.out{background:var(--paper);color:#1B2026;padding:14px;border-radius:5px;
       merge them, reorder them inside it, or give a field a lane of its own. A field left in
       the tray is simply left out.</p>
     <div class="lanes" id="lanes"></div>
-    <div class="bar"><button class="pri" id="btnAddCol">Add column</button></div>
+    <div class="bar"><button class="pri" id="btnAddCol">Add column</button>
+      <span class="spacer"></span>
+      <span style="min-width:250px"><label>Heading when the base table has none</label>
+        <input id="fallbackHeading" placeholder="VISUAL GUIDE"></span></div>
     <div class="card">
       <div class="card-hd"><div class="tab"></div><span class="nm">Unassigned fields</span></div>
       <div class="card-bd"><div id="tray" class="grid g3"></div></div>
@@ -182,8 +210,34 @@ pre.out{background:var(--paper);color:#1B2026;padding:14px;border-radius:5px;
   </section>
 </main>
 
+<div class="scrim" id="scrim">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="cloudTitle">
+    <div class="modal-hd">
+      <h2 id="cloudTitle">Cloud setups</h2>
+      <div class="spacer"></div>
+      <button class="tiny ghost" id="btnCloudClose">Close</button>
+    </div>
+    <div class="modal-bd">
+      <div class="conn"><span class="dot" id="connDot"></span><span id="connTxt">Checking…</span></div>
+      <div id="cloudBody">
+        <div class="savebox">
+          <div><label>Save the current setup as</label>
+            <input id="cfgName" placeholder="e.g. Standard 4-pass guide"></div>
+          <label class="chk"><input type="checkbox" id="cfgWithText"> include pasted text</label>
+          <button class="pri" id="btnCfgSave">Save</button>
+        </div>
+        <div id="cfgList"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 <input type="file" id="fileIn" accept=".json" hidden>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="firebase-config.js"></script>
 
 <script>
 /*CORE_START*/
@@ -201,6 +255,14 @@ function keyRe(src){
   try { return raw ? new RegExp(raw) : null; } catch(e){ return null; }
 }
 function firstKey(re, s){ if(!re) return null; const m = re.exec(s); return m ? (m[1]||m[2]||null) : null; }
+/* Wrap a key pattern for line-anchored use (keyed inputs). We add our own leading
+   ^\s*, so drop a redundant leading ^ from the source to avoid a nested anchor.
+   The trailing $ is kept: for the `bare` pattern it is what makes the key occupy
+   the whole line, with the value carried on the following lines. */
+function anchoredKeyRe(re){
+  const inner = re.source.replace(/^\^+/, '');
+  return new RegExp('^\\s*(?:' + inner + ')\\s*');
+}
 
 /* ---------- parse: markdown table ---------- */
 function parseTable(text, src){
@@ -227,6 +289,7 @@ function parseTable(text, src){
     if(cells.length < 2) continue;
     if(cells.every(c => /^:?-{2,}:?$/.test(c))) continue;
     const ki = src.keyCol==null ? 0 : src.keyCol;
+    if(ki >= cells.length){ out.keyColOut = (out.keyColOut||0)+1; continue; }
     const k = firstKey(re, cells[ki] || '');
     if(k === null){
       if(!out.labels.length) out.labels = cells.slice();
@@ -242,12 +305,13 @@ function parseTable(text, src){
 
 /* ---------- parse: keyed blocks ---------- */
 function parseKeyed(text, src){
-  const re = keyRe(src), out = {map:{}, trailing:'', order:[], error:null};
+  const re = keyRe(src), out = {map:{}, trailing:'', order:[], dupes:[], error:null};
   if(!re){ out.error = 'That key pattern is not valid.'; return out; }
-  const anchored = new RegExp('^\\s*(?:' + re.source + ')\\s*');
+  const anchored = anchoredKeyRe(re);
   let key=null, buf=[], tail=[], done=false;
   const flush = ()=>{ if(key!==null){ const v = buf.join(' ').replace(/\s+/g,' ').trim();
-    if(v){ if(!(key in out.map)) out.order.push(key); out.map[key]=v; } } };
+    if(v){ if(key in out.map){ if(!out.dupes.includes(key)) out.dupes.push(key); }
+           else out.order.push(key); out.map[key]=v; } } };
   for(const raw of text.split(/\r?\n/)){
     if(src.captureTrailing && /^\s*#{1,6}\s+\S/.test(raw)) done = true;
     if(done){ tail.push(raw); continue; }
@@ -325,6 +389,12 @@ function norm(s){
 }
 function runChecks(state, parsed){
   const out = [], base = parsed[state.baseId];
+  for(const s of state.sources){
+    const p = parsed[s.id];
+    if(s.type==='table' && p && p.keyColOut) out.push({lv:'warn',
+      h:'“'+s.name+'” — key column is out of range',
+      p:p.keyColOut+' line(s) have fewer columns than the “Key is in column” setting, so they were skipped. Lower that number, or check those rows.'});
+  }
   if(!base || !base.items || !base.items.some(i=>i.t==='row')){
     out.push({lv:'info', h:'No rows yet', p:'Add a table input and paste a pass into it. The rows it contains become the rows of the guide.'});
     return out;
@@ -344,6 +414,14 @@ function runChecks(state, parsed){
     if(unknown.length) out.push({lv:'err', h:'“'+s.name+'” refers to keys that do not exist',
       p:'These entries have nowhere to attach and will be dropped. Either the key was mistyped, or the base table was renumbered after this pass ran.',
       keys:unknown, fix:{type:'dropKeys', srcId:s.id, keys:unknown, label:'Drop these entries'}});
+  }
+
+  for(const s of state.sources){
+    const p = parsed[s.id];
+    if(s.type!=='keyed' || !p || !p.dupes || !p.dupes.length) continue;
+    out.push({lv:'warn', h:'“'+s.name+'” has duplicate keys',
+      p:'The same key appears more than once here, so only the last value for each is kept — the earlier ones are silently dropped. Renumber the repeats.',
+      keys:p.dupes});
   }
 
   const used = new Set(state.columns.flatMap(c=>c.parts));
@@ -431,6 +509,12 @@ function blank(){
 }
 
 function syncFields(){
+  // Tolerate partial/hand-edited setups (e.g. an imported file missing arrays)
+  // so a missing field never throws while syncing.
+  if(!Array.isArray(state.sources)) state.sources=[];
+  if(!Array.isArray(state.fields)) state.fields=[];
+  if(!Array.isArray(state.columns)) state.columns=[];
+  if(state.verifyField && !state.sources.some(s=>state.verifyField.startsWith(s.id+':'))) state.verifyField='';
   const keep=[];
   for(const s of state.sources){
     const p = parsed[s.id] || {};
@@ -441,9 +525,13 @@ function syncFields(){
         if(i===kc) return;
         const id = s.id+':'+i;
         const old = state.fields.find(f=>f.id===id);
-        keep.push(old || {id, srcId:s.id, kind:'table', col:i, label:lab||('Column '+(i+1)), prefix:'', fallback:''});
-        const f = keep[keep.length-1];
-        if(!old || f.label.startsWith('Column ')) f.label = lab || f.label;
+        // Table field labels are not user-editable, so keep them in sync with the
+        // source header. When the header is renamed the field label follows it;
+        // only fall back to a placeholder when no header was ever parsed.
+        const f = old || {id, srcId:s.id, kind:'table', col:i, label:'', prefix:'', fallback:''};
+        if(lab) f.label = lab;
+        else if(!f.label) f.label = 'Column '+(i+1);
+        keep.push(f);
       });
     }else{
       const id = s.id+':v';
@@ -457,11 +545,12 @@ function syncFields(){
 }
 
 function autoColumns(){
-  if(state.columns.length) return;
+  if(state.columns.length || state.columnsInit) return;
   const base = state.sources.find(s=>s.id===state.baseId);
   if(!base) return;
   const fs = state.fields.filter(f=>f.srcId===base.id);
   if(!fs.length) return;
+  state.columnsInit = true;
   state.columns = [
     {id:uid('c'), title: fs[0].label || 'Script Line', parts:[fs[0].id], joiner:' — '},
     {id:uid('c'), title: fs[1] ? (fs[1].label||'Visual Guide') : 'Visual Guide',
@@ -489,8 +578,9 @@ function renderSources(){
     const hd = el('div','card-hd');
     hd.appendChild(el('div','tab'));
     const nm = el('input'); nm.value=s.name; nm.style.maxWidth='230px'; nm.setAttribute('aria-label','Input name');
+    nm.dataset.fkey='src-name-'+s.id;
     nm.oninput = ()=>{ s.name=nm.value;
-      const f=state.fields.find(f=>f.id===s.id+':v'); if(f) f.label=nm.value; commit(false); };
+      const f=state.fields.find(f=>f.id===s.id+':v'); if(f) f.label=nm.value; commit('cols'); };
     hd.appendChild(nm);
     hd.appendChild(el('span','pill', s.type==='table'?'table':'keyed'));
     if(s.type==='table'){
@@ -498,9 +588,22 @@ function renderSources(){
       b.onclick=()=>{ state.baseId=s.id; commit(); };
       hd.appendChild(b);
     }
-    const cnt = s.type==='table' ? (p.items||[]).filter(i=>i.t==='row').length + ' rows'
-                                 : Object.keys(p.map||{}).length + ' entries';
-    hd.appendChild(el('span','pill '+(p.error?'bad':((p.items||p.map)&&cnt[0]!=='0'?'good':'')), p.error?'error':cnt));
+    const countPill = el('span','pill');
+    const errLine = el('p','hint'); errLine.style.cssText='color:var(--alert);margin:8px 0 0';
+    const tailLine = el('p','hint'); tailLine.style.margin='8px 0 0';
+    const repaint = ()=>{
+      const q = parsed[s.id] || {};
+      const c = s.type==='table' ? (q.items||[]).filter(i=>i.t==='row').length + ' rows'
+                                 : Object.keys(q.map||{}).length + ' entries';
+      countPill.textContent = q.error ? 'error' : c;
+      countPill.className = 'pill ' + (q.error ? 'bad' : (c[0]!=='0' ? 'good' : ''));
+      errLine.textContent = q.error || '';
+      errLine.style.display = q.error ? '' : 'none';
+      const showTail = q.trailing && s.captureTrailing;
+      tailLine.textContent = showTail ? 'Trailing block captured: ' + q.trailing.split('\n').length + ' lines.' : '';
+      tailLine.style.display = showTail ? '' : 'none';
+    };
+    hd.appendChild(countPill);
     hd.appendChild(el('div','spacer'));
     const del = el('button','tiny ghost','Remove'); del.onclick=()=>{
       state.sources.splice(idx,1);
@@ -519,13 +622,15 @@ function renderSources(){
 
     if(s.pattern==='custom'){
       const w=el('div'); w.appendChild(el('label',null,'Custom regex — group 1 is the key'));
-      const i=el('input'); i.value=s.customRe||''; i.oninput=()=>{s.customRe=i.value; commit();};
+      const i=el('input'); i.value=s.customRe||''; i.dataset.fkey='src-re-'+s.id;
+      i.oninput=()=>{ s.customRe=i.value; commit('cols'); repaint(); };
       w.appendChild(i); cfg.appendChild(w);
     }
     if(s.type==='table'){
       const w=el('div'); w.appendChild(el('label',null,'Key is in column'));
       const i=el('input'); i.type='number'; i.min='1'; i.value=(s.keyCol==null?0:s.keyCol)+1;
-      i.oninput=()=>{ s.keyCol=Math.max(0,(parseInt(i.value)||1)-1); commit(); };
+      i.dataset.fkey='src-kc-'+s.id;
+      i.oninput=()=>{ if(i.value==='') return; s.keyCol=Math.max(0,(parseInt(i.value)||1)-1); commit('cols'); repaint(); };
       w.appendChild(i); cfg.appendChild(w);
     }else{
       const w=el('div'); w.appendChild(el('label',null,'Text after a heading'));
@@ -541,14 +646,11 @@ function renderSources(){
 
     const ta = el('textarea'); ta.rows = 6; ta.value = s.text||'';
     ta.placeholder = s.type==='table' ? 'Paste the table pass here…' : 'Paste the keyed pass here…';
-    ta.oninput = ()=>{ s.text=ta.value; commit(false); };
+    ta.dataset.fkey='src-text-'+s.id;
+    ta.oninput = ()=>{ s.text=ta.value; commit('cols'); repaint(); };
     bd.appendChild(ta);
-    if(p.error){ const e=el('p','hint'); e.style.color='var(--alert)'; e.textContent=p.error; bd.appendChild(e); }
-    if(p.trailing && s.captureTrailing){
-      const t=el('p','hint'); t.style.margin='8px 0 0';
-      t.textContent = 'Trailing block captured: ' + p.trailing.split('\n').length + ' lines.';
-      bd.appendChild(t);
-    }
+    bd.appendChild(errLine); bd.appendChild(tailLine);
+    repaint();
     card.appendChild(bd); host.appendChild(card);
   });
 }
@@ -580,9 +682,11 @@ function chip(f, colIdx, partIdx){
   c.appendChild(top);
   const cfg = el('div','chip-cfg');
   const p=el('input'); p.value=f.prefix||''; p.placeholder='prefix, e.g. `[CONTEXT]:`';
-  p.oninput=()=>{ f.prefix=p.value; commit(false); };
+  p.dataset.fkey='fld-pre-'+f.id;
+  p.oninput=()=>{ f.prefix=p.value; commit('light'); };
   const fb=el('input'); fb.value=f.fallback||''; fb.placeholder='if empty…';
-  fb.oninput=()=>{ f.fallback=fb.value; commit(false); };
+  fb.dataset.fkey='fld-fb-'+f.id;
+  fb.oninput=()=>{ f.fallback=fb.value; commit('light'); };
   cfg.appendChild(p); cfg.appendChild(fb); c.appendChild(cfg);
   return c;
 }
@@ -593,9 +697,11 @@ function renderColumns(){
     const lane = el('div','lane');
     const hd = el('div','lane-hd');
     const t = el('input'); t.value = col.title||''; t.setAttribute('aria-label','Column title');
-    t.oninput=()=>{ col.title=t.value; commit(false); }; hd.appendChild(t);
+    t.dataset.fkey='col-t-'+col.id;
+    t.oninput=()=>{ col.title=t.value; commit('light'); }; hd.appendChild(t);
     const j = el('input'); j.value = col.joiner==null?' — ':col.joiner; j.style.maxWidth='62px';
-    j.title='Joiner between parts'; j.oninput=()=>{ col.joiner=j.value; commit(false); }; hd.appendChild(j);
+    j.dataset.fkey='col-j-'+col.id;
+    j.title='Joiner between parts'; j.oninput=()=>{ col.joiner=j.value; commit('light'); }; hd.appendChild(j);
     const L=el('button','tiny ghost','◀'); L.disabled=ci===0;
     L.onclick=()=>{ const a=state.columns; [a[ci-1],a[ci]]=[a[ci],a[ci-1]]; commit(); }; hd.appendChild(L);
     const R=el('button','tiny ghost','▶'); R.disabled=ci===state.columns.length-1;
@@ -644,7 +750,7 @@ function renderChecks(){
 function applyFix(fix){
   if(fix.type==='dropKeys'){
     const s = state.sources.find(x=>x.id===fix.srcId); if(!s) return;
-    const re = keyRe(s); const anchored = new RegExp('^\\s*(?:'+re.source+')\\s*');
+    const re = keyRe(s); const anchored = anchoredKeyRe(re);
     const drop = new Set(fix.keys); const keep=[]; let skipping=false;
     for(const line of (s.text||'').split(/\r?\n/)){
       const m = anchored.exec(line);
@@ -666,22 +772,48 @@ function renderOutput(){
 
 /* ---------- glue ---------- */
 let saveT;
-function commit(full=true){
+function preserveFocus(fn){
+  const a = document.activeElement;
+  const k = a && a.dataset ? a.dataset.fkey : null;
+  let ss=null, se=null;
+  if(k){ try{ ss=a.selectionStart; se=a.selectionEnd; }catch(e){} }
+  fn();
+  if(!k) return;
+  const n = document.querySelector('[data-fkey="'+k.replace(/"/g,'\\"')+'"]');
+  if(!n) return;
+  n.focus();
+  if(ss!=null){ try{ n.setSelectionRange(ss,se); }catch(e){} }
+}
+function syncLoose(){
+  const v=document.getElementById('verifyText'), st=document.getElementById('verifyStrip');
+  if(document.activeElement!==v && v.value!==(state.verifyText||'')) v.value=state.verifyText||'';
+  if(document.activeElement!==st && st.value!==(state.verifyStrip||'')) st.value=state.verifyStrip||'';
+  const fh=document.getElementById('fallbackHeading');
+  if(fh && document.activeElement!==fh && fh.value!==(state.fallbackHeading||'')) fh.value=state.fallbackHeading||'';
+}
+// mode: 'all' redraws inputs too, 'cols' redraws columns, 'light' only checks + output
+function commit(mode){
+  if(mode===true||mode===undefined) mode='all';
+  if(mode===false) mode='cols';
   reparse();
-  if(full){ renderSources(); renderColumns(); }
-  else { renderColumns(); }
-  renderChecks(); renderOutput();
+  preserveFocus(()=>{
+    if(mode==='all') renderSources();
+    if(mode==='all'||mode==='cols') renderColumns();
+    renderChecks();
+  });
+  renderOutput(); syncLoose();
   clearTimeout(saveT); saveT=setTimeout(()=>Store.save(state), 250);
 }
 function toast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('on');
   setTimeout(()=>t.classList.remove('on'),1400); }
 
-document.querySelectorAll('nav button').forEach(b=>{
-  b.onclick=()=>{
-    document.querySelectorAll('nav button').forEach(x=>x.setAttribute('aria-selected', x===b));
-    document.querySelectorAll('.pane').forEach(p=>p.classList.toggle('on', p.id==='pane-'+b.dataset.pane));
-  };
-});
+function showPane(name){
+  document.querySelectorAll('nav button').forEach(x=>x.setAttribute('aria-selected', x.dataset.pane===name));
+  document.querySelectorAll('.pane').forEach(p=>p.classList.toggle('on', p.id==='pane-'+name));
+  state.pane = name;
+  clearTimeout(saveT); saveT=setTimeout(()=>Store.save(state), 250);
+}
+document.querySelectorAll('nav button').forEach(b=>{ b.onclick=()=>showPane(b.dataset.pane); });
 document.querySelectorAll('[data-add]').forEach(b=>{
   b.onclick=()=>{
     const type=b.dataset.add;
@@ -692,11 +824,13 @@ document.querySelectorAll('[data-add]').forEach(b=>{
     commit();
   };
 });
+document.getElementById('fallbackHeading').oninput=e=>{ state.fallbackHeading=e.target.value; commit('light'); };
+document.getElementById('fallbackHeading').dataset.fkey='fallback-heading';
 document.getElementById('btnAddCol').onclick=()=>{
   state.columns.push({id:uid('c'), title:'New column', parts:[], joiner:' — '}); commit(); };
 document.getElementById('verifyField').onchange=e=>{ state.verifyField=e.target.value; commit(false); };
-document.getElementById('verifyText').oninput=e=>{ state.verifyText=e.target.value; commit(false); };
-document.getElementById('verifyStrip').oninput=e=>{ state.verifyStrip=e.target.value; commit(false); };
+document.getElementById('verifyText').oninput=e=>{ state.verifyText=e.target.value; commit('light'); };
+document.getElementById('verifyStrip').oninput=e=>{ state.verifyStrip=e.target.value; commit('light'); };
 document.getElementById('btnCopy').onclick=async()=>{
   const md=assemble(state,parsed).md;
   try{ await navigator.clipboard.writeText(md); toast('Copied'); }
@@ -717,20 +851,192 @@ document.getElementById('btnImport').onclick=()=>document.getElementById('fileIn
 document.getElementById('fileIn').onchange=e=>{
   const f=e.target.files[0]; if(!f) return;
   const r=new FileReader();
-  r.onload=()=>{ try{ state=JSON.parse(r.result); commit(); toast('Setup loaded'); }
-    catch(err){ toast('That file is not a saved setup'); } };
+  r.onload=()=>{ try{
+      const v=JSON.parse(r.result);
+      if(!v || !Array.isArray(v.sources) || !Array.isArray(v.columns)) throw new Error('shape');
+      state=v; commit(); toast('Setup loaded');
+    } catch(err){ toast('That file is not a saved setup'); } };
   r.readAsText(f); e.target.value='';
 };
 document.getElementById('btnReset').onclick=()=>{
   if(!confirm('Clear every input and column, and start from an empty setup?')) return;
-  Store.clear(); state=blank(); commit(); toast('Cleared');
+  Store.clear(); state=blank();
+  if(typeof Cloud!=='undefined'){ Cloud.currentId=null; Cloud.currentName=''; }
+  const cn=document.getElementById('cfgName'); if(cn) cn.value='';
+  commit(); toast('Cleared');
 };
+
+
+/* ---------- cloud ---------- */
+const Cloud = {
+  ok:false, db:null, err:'', currentId:null, currentName:'',
+  init(){
+    const cfg = window.FIREBASE_CONFIG;
+    if(!cfg || !cfg.projectId || String(cfg.projectId).startsWith('YOUR_')){
+      this.err = 'Not connected — open firebase-config.js and fill in your project details.'; return; }
+    if(typeof firebase === 'undefined'){
+      this.err = 'Firebase did not load. Check the connection, or that the two script tags are reachable.'; return; }
+    try{
+      if(!firebase.apps.length) firebase.initializeApp(cfg);
+      this.db = firebase.firestore(); this.ok = true;
+    }catch(e){ this.err = 'Firebase refused the config: ' + e.message; }
+  },
+  col(){ return this.db.collection(window.FIREBASE_COLLECTION || 'assembler_configs'); },
+  strip(st, withText){
+    const c = JSON.parse(JSON.stringify(st));
+    if(!withText){ (c.sources||[]).forEach(x=>x.text=''); c.verifyText=''; }
+    return c;
+  },
+  async list(){
+    const snap = await this.col().orderBy('updatedAt','desc').limit(200).get();
+    return snap.docs.map(d=>({id:d.id, ...d.data()}));
+  },
+  async create(name, st, withText){
+    const ref = await this.col().add({
+      name, withText: !!withText, body: JSON.stringify(this.strip(st, withText)),
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+    return ref.id;
+  },
+  async overwrite(id, name, st, withText){
+    await this.col().doc(id).set({
+      name, withText: !!withText, body: JSON.stringify(this.strip(st, withText)),
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+  },
+  async rename(id, name){
+    await this.col().doc(id).update({name, updatedAt: firebase.firestore.FieldValue.serverTimestamp()});
+  },
+  async remove(id){ await this.col().doc(id).delete(); }
+};
+
+function whenStr(ts){
+  if(!ts || !ts.toDate) return 'just now';
+  const d = ts.toDate(), diff = (Date.now()-d.getTime())/1000;
+  if(diff < 90) return 'just now';
+  if(diff < 3600) return Math.round(diff/60)+' min ago';
+  if(diff < 86400) return Math.round(diff/3600)+' hr ago';
+  if(diff < 604800) return Math.round(diff/86400)+' d ago';
+  return d.toLocaleDateString();
+}
+
+let cloudBusy = false;
+async function cloudRefresh(){
+  const dot = document.getElementById('connDot'), txt = document.getElementById('connTxt');
+  const body = document.getElementById('cloudBody'), list = document.getElementById('cfgList');
+  if(!Cloud.ok){
+    dot.className = 'dot down'; txt.textContent = Cloud.err;
+    body.style.display = 'none'; return;
+  }
+  body.style.display = '';
+  dot.className = 'dot up';
+  txt.textContent = 'Connected to ' + window.FIREBASE_CONFIG.projectId +
+    ' · setups here are public to anyone with this app';
+  list.innerHTML = '<div class="empty">Loading…</div>';
+  let items;
+  try{ items = await Cloud.list(); }
+  catch(e){
+    dot.className='dot down';
+    txt.textContent = 'Could not read: ' + e.message + ' — check the Firestore rules in firebase-config.js.';
+    list.innerHTML=''; return;
+  }
+  list.innerHTML = '';
+  if(!items.length){ list.appendChild(el('div','empty','No setups saved yet. Save the current one above.')); return; }
+  for(const it of items){
+    const row = el('div','cfg' + (it.id===Cloud.currentId ? ' cur' : ''));
+    row.appendChild(el('span','nm', it.name || 'Untitled'));
+    row.appendChild(el('span','pill', it.withText ? 'with text' : 'setup only'));
+    row.appendChild(el('span','meta', whenStr(it.updatedAt)));
+    const act = (label, cls, fn) => { const b = el('button','tiny '+(cls||'ghost'), label); b.onclick=fn; return b; };
+    row.appendChild(act('Load','pri', async ()=>{
+      if(cloudBusy) return;
+      if(!confirm('Load “'+it.name+'”? This replaces what is open now.')) return;
+      cloudBusy = true;
+      try{
+        const st = JSON.parse(it.body);
+        if(!it.withText){
+          const old = {}; (state.sources||[]).forEach(x=>old[x.name]=x.text);
+          (st.sources||[]).forEach(x=>{ if(!x.text && old[x.name]) x.text = old[x.name]; });
+          st.verifyText = st.verifyText || state.verifyText || '';
+        }
+        state = st;
+        Cloud.currentId = it.id; Cloud.currentName = it.name;
+        document.getElementById('cfgName').value = it.name;
+        document.getElementById('cfgWithText').checked = !!it.withText;
+        document.getElementById('verifyText').value = state.verifyText || '';
+        document.getElementById('verifyStrip').value = state.verifyStrip || '';
+        commit(); cloudRefresh(); toast('Loaded “'+it.name+'”');
+      }catch(e){ toast('That setup could not be read'); }
+      finally{ cloudBusy = false; }
+    }));
+    row.appendChild(act('Update', '', async ()=>{
+      if(cloudBusy) return;
+      if(!confirm('Overwrite “'+it.name+'” with what is open now?')) return;
+      cloudBusy = true;
+      try{
+        await Cloud.overwrite(it.id, it.name, state, !!it.withText);
+        Cloud.currentId = it.id; toast('Updated'); cloudRefresh();
+      }catch(e){ toast('Update failed: '+e.message); }
+      finally{ cloudBusy = false; }
+    }));
+    row.appendChild(act('Rename', '', async ()=>{
+      if(cloudBusy) return;
+      const n = prompt('New name', it.name); if(!n || n===it.name) return;
+      cloudBusy = true;
+      try{ await Cloud.rename(it.id, n.trim()); toast('Renamed'); cloudRefresh(); }
+      catch(e){ toast('Rename failed'); }
+      finally{ cloudBusy = false; }
+    }));
+    row.appendChild(act('Delete', '', async ()=>{
+      if(cloudBusy) return;
+      if(!confirm('Delete “'+it.name+'” for everyone? This cannot be undone.')) return;
+      cloudBusy = true;
+      try{
+        await Cloud.remove(it.id);
+        if(Cloud.currentId===it.id) Cloud.currentId=null;
+        toast('Deleted'); cloudRefresh();
+      }catch(e){ toast('Delete failed'); }
+      finally{ cloudBusy = false; }
+    }));
+    list.appendChild(row);
+  }
+}
+
+document.getElementById('btnCloud').onclick = ()=>{
+  document.getElementById('scrim').classList.add('on');
+  if(!document.getElementById('cfgName').value) document.getElementById('cfgName').value = Cloud.currentName || '';
+  cloudRefresh();
+  document.getElementById('cfgName').focus();
+};
+const closeCloud = ()=> document.getElementById('scrim').classList.remove('on');
+document.getElementById('btnCloudClose').onclick = closeCloud;
+document.getElementById('scrim').onclick = e => { if(e.target.id==='scrim') closeCloud(); };
+document.addEventListener('keydown', e => {
+  if(e.key==='Escape' && document.getElementById('scrim').classList.contains('on')) closeCloud();
+});
+
+document.getElementById('btnCfgSave').onclick = async ()=>{
+  if(cloudBusy) return;
+  const name = document.getElementById('cfgName').value.trim();
+  if(!name){ toast('Give the setup a name first'); return; }
+  const withText = document.getElementById('cfgWithText').checked;
+  cloudBusy = true;
+  try{
+    const id = await Cloud.create(name, state, withText);
+    Cloud.currentId = id; Cloud.currentName = name;
+    toast('Saved to cloud'); cloudRefresh();
+  }catch(e){ toast('Save failed: ' + e.message); }
+  cloudBusy = false;
+};
+
+Cloud.init();
 
 state = Store.load() || blank();
 if(!state.sources || !state.sources.length) state = blank();
 document.getElementById('verifyText').value = state.verifyText||'';
 document.getElementById('verifyStrip').value = state.verifyStrip||'';
 commit();
+showPane(state.pane && document.getElementById('pane-'+state.pane) ? state.pane : 'inputs');
 </script>
 </body>
 </html>
