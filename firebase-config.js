@@ -4,21 +4,20 @@
    1. Go to console.firebase.google.com → your project → Project settings
       → General → "Your apps" → Web app. Copy the config values in below.
    2. In the console, open Build → Firestore Database → Create database.
-   3. Keep this file next to guide-assembler.html.
+   3. Enable Google sign-in: Build → Authentication → Sign-in method →
+      add "Google" as a provider.
+   4. Add the site's domain under Authentication → Settings →
+      Authorized domains (e.g. vga.alamza.com and localhost for testing),
+      otherwise the Google sign-in popup is rejected.
+   5. Keep this file next to index.html.
 
-   Saved setups are PUBLIC: anyone with the app and this config can read,
-   edit and delete them. Do not put anything private in a setup name.
+   Sign-in is REQUIRED to use the app, and every saved setup is PRIVATE to
+   the Google account that created it — no one else can read, edit, or
+   delete it.
 
-   Firestore rules that match that (Firestore → Rules → Publish):
-
-     rules_version = '2';
-     service cloud.firestore {
-       match /databases/{database}/documents {
-         match /assembler_configs/{doc} {
-           allow read, write: if true;
-         }
-       }
-     }
+   Publish the matching Firestore rules from the firestore.rules file in this
+   repo (Firestore → Rules → paste → Publish). Do NOT use `allow ... if true`
+   — that would make every setup world-readable and world-writable.
 ------------------------------------------------------------------ */
 
 window.FIREBASE_CONFIG = {

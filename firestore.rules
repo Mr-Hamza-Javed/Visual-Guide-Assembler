@@ -1,0 +1,38 @@
+rules_version = '2';
+
+// Firestore security rules for Guide Assembler.
+//
+// Every saved setup is a document in the `assembler_configs` collection and
+// carries an `owner` field equal to the Firebase Auth uid of the Google
+// account that created it. These rules make each document PRIVATE to its
+// owner: you must be signed in, and you can only read, change, or delete the
+// documents you own. The app queries with `where('owner','==', <your uid>)`,
+// so it never even asks for anyone else's data.
+//
+// Publish: Firebase console -> Firestore Database -> Rules -> paste -> Publish
+// (or `firebase deploy --only firestore:rules` with the Firebase CLI).
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    // The document already stored is owned by the caller.
+    function ownsExisting() {
+      return isSignedIn() && resource.data.owner == request.auth.uid;
+    }
+    // The document being written is stamped with the caller as owner.
+    function ownsIncoming() {
+      return isSignedIn() && request.resource.data.owner == request.auth.uid;
+    }
+
+    match /assembler_configs/{doc} {
+      allow read, delete: if ownsExisting();
+      allow create:       if ownsIncoming();
+      allow update:       if ownsExisting() && ownsIncoming();
+    }
+
+    // Everything else is denied by default.
+  }
+}

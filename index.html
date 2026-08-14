@@ -129,6 +129,22 @@ pre.out{background:var(--paper);color:#1B2026;padding:14px;border-radius:5px;
 .chk{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--dim);
   white-space:nowrap;padding-bottom:6px}
 .chk input{width:auto}
+
+/* auth gate + user badge */
+.authgate{position:fixed;inset:0;z-index:80;background:var(--ink);
+  display:flex;align-items:center;justify-content:center;padding:24px}
+.authcard{width:100%;max-width:360px;text-align:center;border:1px solid var(--edge);
+  background:var(--panel);border-radius:8px;padding:30px 26px}
+.authcard .brand{font-size:17px;letter-spacing:.12em;text-transform:uppercase;margin-bottom:18px}
+.authmsg{font:13px/1.6 var(--sans);color:var(--dim);margin:0 0 20px}
+.authbtn{width:100%;display:flex;align-items:center;justify-content:center;gap:9px;
+  padding:9px 12px;font-size:13px}
+.authbtn svg{width:17px;height:17px;flex:none}
+.authnote{font:12px/1.5 var(--sans);margin:14px 0 0;min-height:1em;color:var(--alert)}
+.authnote.info{color:var(--dim)}
+.userbox{display:flex;align-items:center;gap:8px}
+.userbox .uname{font-size:11.5px;color:var(--dim);max-width:180px;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
 @media(prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 </head>
@@ -143,7 +159,23 @@ pre.out{background:var(--paper);color:#1B2026;padding:14px;border-radius:5px;
     <button class="ghost" id="btnImport">Import file</button>
     <button class="ghost" id="btnReset">Clear all</button>
   </div>
+  <div class="userbox" id="userBox" hidden>
+    <span class="uname" id="uName"></span>
+    <button class="ghost tiny" id="btnSignOut">Sign out</button>
+  </div>
 </header>
+
+<div class="authgate" id="authGate">
+  <div class="authcard">
+    <div class="brand"><b>GUIDE</b> ASSEMBLER</div>
+    <p class="authmsg" id="authMsg">Checking sign-in…</p>
+    <button class="pri authbtn" id="btnSignIn" hidden>
+      <svg viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.9 2.4 30.5 0 24 0 14.6 0 6.4 5.4 2.5 13.3l7.9 6.1C12.3 13.2 17.7 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.7c-.5 3-2.2 5.5-4.7 7.2l7.3 5.7c4.3-3.9 6.9-9.8 6.9-17.4z"/><path fill="#FBBC05" d="M10.4 28.6c-.5-1.5-.8-3-.8-4.6s.3-3.1.8-4.6l-7.9-6.1C.9 16.5 0 20.1 0 24s.9 7.5 2.5 10.7l7.9-6.1z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.3-5.7c-2 1.4-4.7 2.3-8.6 2.3-6.3 0-11.7-3.7-13.6-9.1l-7.9 6.1C6.4 42.6 14.6 48 24 48z"/></svg>
+      <span>Continue with Google</span>
+    </button>
+    <p class="authnote" id="authNote"></p>
+  </div>
+</div>
 
 <nav role="tablist">
   <button role="tab" data-pane="inputs" aria-selected="true"><span class="n">01</span>Inputs</button>
@@ -236,6 +268,7 @@ pre.out{background:var(--paper);color:#1B2026;padding:14px;border-radius:5px;
 <input type="file" id="fileIn" accept=".json" hidden>
 
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <script src="firebase-config.js"></script>
 
@@ -490,10 +523,13 @@ function runChecks(state, parsed){
 /* ---------- storage ---------- */
 const KEY='guide-assembler-v1';
 const Store={
-  mem:{},
-  save(v){ try{ localStorage.setItem(KEY, JSON.stringify(v)); }catch(e){ this.mem[KEY]=v; } },
-  load(){ try{ const s=localStorage.getItem(KEY); return s?JSON.parse(s):null; }catch(e){ return this.mem[KEY]||null; } },
-  clear(){ try{ localStorage.removeItem(KEY); }catch(e){ delete this.mem[KEY]; } }
+  mem:{}, uid:null,
+  // Namespace the working state by signed-in user so each Google account keeps
+  // its own local workspace on a shared browser.
+  k(){ return this.uid ? KEY+':'+this.uid : KEY; },
+  save(v){ try{ localStorage.setItem(this.k(), JSON.stringify(v)); }catch(e){ this.mem[this.k()]=v; } },
+  load(){ try{ const s=localStorage.getItem(this.k()); return s?JSON.parse(s):null; }catch(e){ return this.mem[this.k()]||null; } },
+  clear(){ try{ localStorage.removeItem(this.k()); }catch(e){ delete this.mem[this.k()]; } }
 };
 
 /* ---------- state ---------- */
@@ -869,18 +905,24 @@ document.getElementById('btnReset').onclick=()=>{
 
 /* ---------- cloud ---------- */
 const Cloud = {
-  ok:false, db:null, err:'', currentId:null, currentName:'',
+  ok:false, db:null, auth:null, provider:null, user:null, err:'', currentId:null, currentName:'',
   init(){
     const cfg = window.FIREBASE_CONFIG;
     if(!cfg || !cfg.projectId || String(cfg.projectId).startsWith('YOUR_')){
       this.err = 'Not connected — open firebase-config.js and fill in your project details.'; return; }
     if(typeof firebase === 'undefined'){
-      this.err = 'Firebase did not load. Check the connection, or that the two script tags are reachable.'; return; }
+      this.err = 'Firebase did not load. Check the connection, or that the script tags are reachable.'; return; }
     try{
       if(!firebase.apps.length) firebase.initializeApp(cfg);
-      this.db = firebase.firestore(); this.ok = true;
+      this.db = firebase.firestore();
+      this.auth = firebase.auth();
+      this.provider = new firebase.auth.GoogleAuthProvider();
+      this.ok = true;
     }catch(e){ this.err = 'Firebase refused the config: ' + e.message; }
   },
+  uid(){ return this.user ? this.user.uid : null; },
+  signIn(){ return this.auth.signInWithPopup(this.provider); },
+  signOut(){ return this.auth.signOut(); },
   col(){ return this.db.collection(window.FIREBASE_COLLECTION || 'assembler_configs'); },
   strip(st, withText){
     const c = JSON.parse(JSON.stringify(st));
@@ -888,19 +930,23 @@ const Cloud = {
     return c;
   },
   async list(){
-    const snap = await this.col().orderBy('updatedAt','desc').limit(200).get();
-    return snap.docs.map(d=>({id:d.id, ...d.data()}));
+    // Only the signed-in user's own setups. Sorted client-side so no composite
+    // index is needed for the owner filter + recency ordering.
+    const snap = await this.col().where('owner','==', this.uid()).get();
+    const ms = t => (t && t.toMillis) ? t.toMillis() : 0;
+    return snap.docs.map(d=>({id:d.id, ...d.data()}))
+      .sort((a,b)=> ms(b.updatedAt) - ms(a.updatedAt)).slice(0,200);
   },
   async create(name, st, withText){
     const ref = await this.col().add({
-      name, withText: !!withText, body: JSON.stringify(this.strip(st, withText)),
+      name, owner: this.uid(), withText: !!withText, body: JSON.stringify(this.strip(st, withText)),
       updatedAt: firebase.firestore.FieldValue.serverTimestamp()
     });
     return ref.id;
   },
   async overwrite(id, name, st, withText){
     await this.col().doc(id).set({
-      name, withText: !!withText, body: JSON.stringify(this.strip(st, withText)),
+      name, owner: this.uid(), withText: !!withText, body: JSON.stringify(this.strip(st, withText)),
       updatedAt: firebase.firestore.FieldValue.serverTimestamp()
     });
   },
@@ -924,20 +970,20 @@ let cloudBusy = false;
 async function cloudRefresh(){
   const dot = document.getElementById('connDot'), txt = document.getElementById('connTxt');
   const body = document.getElementById('cloudBody'), list = document.getElementById('cfgList');
-  if(!Cloud.ok){
-    dot.className = 'dot down'; txt.textContent = Cloud.err;
+  if(!Cloud.ok || !Cloud.user){
+    dot.className = 'dot down'; txt.textContent = Cloud.ok ? 'Sign in to use cloud setups.' : Cloud.err;
     body.style.display = 'none'; return;
   }
   body.style.display = '';
   dot.className = 'dot up';
-  txt.textContent = 'Connected to ' + window.FIREBASE_CONFIG.projectId +
-    ' · setups here are public to anyone with this app';
+  txt.textContent = 'Signed in as ' + (Cloud.user.displayName || Cloud.user.email) +
+    ' · your setups are private to your account';
   list.innerHTML = '<div class="empty">Loading…</div>';
   let items;
   try{ items = await Cloud.list(); }
   catch(e){
     dot.className='dot down';
-    txt.textContent = 'Could not read: ' + e.message + ' — check the Firestore rules in firebase-config.js.';
+    txt.textContent = 'Could not read: ' + e.message + ' — check the Firestore rules (see firestore.rules).';
     list.innerHTML=''; return;
   }
   list.innerHTML = '';
@@ -989,7 +1035,7 @@ async function cloudRefresh(){
     }));
     row.appendChild(act('Delete', '', async ()=>{
       if(cloudBusy) return;
-      if(!confirm('Delete “'+it.name+'” for everyone? This cannot be undone.')) return;
+      if(!confirm('Delete “'+it.name+'”? This cannot be undone.')) return;
       cloudBusy = true;
       try{
         await Cloud.remove(it.id);
@@ -1029,14 +1075,80 @@ document.getElementById('btnCfgSave').onclick = async ()=>{
   cloudBusy = false;
 };
 
+/* ---------- auth gate + bootstrap ---------- */
 Cloud.init();
 
-state = Store.load() || blank();
-if(!state.sources || !state.sources.length) state = blank();
-document.getElementById('verifyText').value = state.verifyText||'';
-document.getElementById('verifyStrip').value = state.verifyStrip||'';
-commit();
-showPane(state.pane && document.getElementById('pane-'+state.pane) ? state.pane : 'inputs');
+const authGate = document.getElementById('authGate');
+const authMsg  = document.getElementById('authMsg');
+const authNote = document.getElementById('authNote');
+const btnSignIn= document.getElementById('btnSignIn');
+const userBox  = document.getElementById('userBox');
+const uName    = document.getElementById('uName');
+let booted = false;
+
+function showGate(){ authGate.style.display='flex'; }
+function hideGate(){ authGate.style.display='none'; }
+
+function bootAppFor(user){
+  Store.uid = user.uid;
+  uName.textContent = user.displayName || user.email || 'Signed in';
+  userBox.hidden = false;
+  Cloud.currentId = null; Cloud.currentName = '';
+  const cn = document.getElementById('cfgName'); if(cn) cn.value = '';
+  state = Store.load() || blank();
+  if(!state.sources || !state.sources.length) state = blank();
+  document.getElementById('verifyText').value = state.verifyText||'';
+  document.getElementById('verifyStrip').value = state.verifyStrip||'';
+  commit();
+  showPane(state.pane && document.getElementById('pane-'+state.pane) ? state.pane : 'inputs');
+  hideGate();
+  booted = true;
+}
+
+function showSignedOut(){
+  booted = false;
+  Store.uid = null; Cloud.currentId = null; Cloud.currentName = '';
+  userBox.hidden = true;
+  closeCloud();
+  authMsg.textContent = 'Sign in to load your own workspace and cloud setups.';
+  authNote.className = 'authnote'; authNote.textContent = '';
+  btnSignIn.hidden = false;
+  showGate();
+}
+
+if(!Cloud.ok){
+  showGate();
+  authMsg.textContent = 'Sign-in is unavailable';
+  authNote.className = 'authnote'; authNote.textContent = Cloud.err;
+  btnSignIn.hidden = true;
+}else{
+  showGate();
+  authMsg.textContent = 'Checking sign-in…';
+  btnSignIn.hidden = true;
+  Cloud.auth.onAuthStateChanged(user=>{
+    Cloud.user = user || null;
+    if(user) bootAppFor(user);
+    else showSignedOut();
+  });
+}
+
+btnSignIn.onclick = async ()=>{
+  btnSignIn.disabled = true;
+  authNote.className = 'authnote info'; authNote.textContent = 'Opening Google sign-in…';
+  try{ await Cloud.signIn(); }
+  catch(e){
+    authNote.className = 'authnote';
+    authNote.textContent = (e && e.code==='auth/popup-blocked')
+      ? 'The sign-in popup was blocked — allow popups for this site and try again.'
+      : (e && e.code==='auth/unauthorized-domain')
+        ? 'This domain is not authorized in Firebase Auth. Add it under Authentication → Settings → Authorized domains.'
+        : 'Sign-in failed: ' + ((e && (e.message||e.code)) || e);
+  }
+  btnSignIn.disabled = false;
+};
+document.getElementById('btnSignOut').onclick = async ()=>{
+  try{ await Cloud.signOut(); }catch(e){ toast('Sign-out failed'); }
+};
 </script>
 </body>
 </html>
